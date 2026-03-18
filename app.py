@@ -44,7 +44,7 @@ def world_to_pixel(x, z, map_name):
 @st.cache_data
 def load_all_data():
     all_frames = []
-    base = "sample_data""
+    base = "sample_data"
     for day_folder in os.listdir(base):
         day_path = os.path.join(base, day_folder)
         if not os.path.isdir(day_path):
