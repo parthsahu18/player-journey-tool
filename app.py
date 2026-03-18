@@ -9,10 +9,6 @@ import numpy as np
 st.set_page_config(page_title="Player Journey Tool", layout="wide")
 st.title("Player Journey Visualization Tool")
 
-# ─────────────────────────────────────
-# MAP CONFIGURATION
-# ─────────────────────────────────────
-
 MAP_CONFIG = {
     "AmbroseValley": {"scale": 900, "origin_x": -370, "origin_z": -473},
     "GrandRift":     {"scale": 581, "origin_x": -290, "origin_z": -290},
@@ -25,10 +21,6 @@ MAP_IMAGES = {
     "Lockdown":      "assets/Lockdown_Minimap.jpg",
 }
 
-# ─────────────────────────────────────
-# COORDINATE CONVERSION
-# ─────────────────────────────────────
-
 def world_to_pixel(x, z, map_name):
     config = MAP_CONFIG[map_name]
     u = (x - config["origin_x"]) / config["scale"]
@@ -37,14 +29,10 @@ def world_to_pixel(x, z, map_name):
     pixel_y = (1 - v) * 1024
     return pixel_x, pixel_y
 
-# ─────────────────────────────────────
-# LOAD ALL DATA
-# ─────────────────────────────────────
-
 @st.cache_data
 def load_all_data():
     all_frames = []
-    base = "sample_data"
+    base = "data"
     for day_folder in os.listdir(base):
         day_path = os.path.join(base, day_folder)
         if not os.path.isdir(day_path):
@@ -71,50 +59,35 @@ with st.spinner("Loading all game data... please wait..."):
 
 st.success(f"Loaded {len(df_all):,} events from {df_all['filename'].nunique()} files!")
 
-# ─────────────────────────────────────
-# FILTERS IN SIDEBAR
-# ─────────────────────────────────────
-
 st.sidebar.title("Filters")
 
-# Map filter
 maps = sorted(df_all['map_id'].dropna().unique().tolist())
 selected_map = st.sidebar.selectbox("Select Map", maps)
 
-# Date filter
 dates = sorted(df_all['date'].unique().tolist())
 selected_date = st.sidebar.selectbox("Select Date", dates)
 
-# Player type filter
 player_type = st.sidebar.radio(
     "Player Type",
     ["All", "Humans Only", "Bots Only"]
 )
 
-# Filter data by map and date
 filtered = df_all[
     (df_all['map_id'] == selected_map) &
     (df_all['date'] == selected_date)
 ]
 
-# Filter by player type
 if player_type == "Humans Only":
     filtered = filtered[filtered['is_bot'] == False]
 elif player_type == "Bots Only":
     filtered = filtered[filtered['is_bot'] == True]
 
-# Match filter
 matches = sorted(filtered['match_id'].dropna().unique().tolist())
 selected_match = st.sidebar.selectbox("Select Match", matches)
 
-# Filter by match
 filtered = filtered[filtered['match_id'] == selected_match]
 
 st.sidebar.write(f"Events in this match: {len(filtered):,}")
-
-# ─────────────────────────────────────
-# CONVERT COORDINATES
-# ─────────────────────────────────────
 
 if len(filtered) > 0:
     filtered = filtered.copy()
@@ -122,22 +95,13 @@ if len(filtered) > 0:
         lambda row: world_to_pixel(row['x'], row['z'], selected_map), axis=1
     ))
 
-    # Separate events
     positions = filtered[filtered['event'].isin(['Position', 'BotPosition'])]
     kills     = filtered[filtered['event'].isin(['Kill', 'BotKill'])]
     deaths    = filtered[filtered['event'].isin(['Killed', 'BotKilled'])]
     storms    = filtered[filtered['event'] == 'KilledByStorm']
     loots     = filtered[filtered['event'] == 'Loot']
 
-    # ─────────────────────────────────────
-    # TABS
-    # ─────────────────────────────────────
-
     tab1, tab2, tab3 = st.tabs(["Player Journey Map", "Timeline", "Heatmap"])
-
-    # ─────────────────────────────────────
-    # TAB 1 — PLAYER JOURNEY MAP
-    # ─────────────────────────────────────
 
     with tab1:
         st.subheader("Player Journey Map")
@@ -157,7 +121,6 @@ if len(filtered) > 0:
             )
         )
 
-        # Movement paths - different color for bots vs humans
         humans_pos = positions[positions['is_bot'] == False]
         bots_pos   = positions[positions['is_bot'] == True]
 
@@ -227,33 +190,35 @@ if len(filtered) > 0:
 
         st.plotly_chart(fig)
 
-        # Stats below map
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Total Events", len(filtered))
         col2.metric("Kills", len(kills))
         col3.metric("Deaths", len(deaths))
         col4.metric("Loots", len(loots))
 
-    # ─────────────────────────────────────
-    # TAB 2 — TIMELINE
-    # ─────────────────────────────────────
-
     with tab2:
         st.subheader("Match Timeline")
 
-        sorted_df = filtered.sort_values('ts')
-        sorted_df['ts_seconds'] = (
-            sorted_df['ts'] - sorted_df['ts'].min()
-        ).dt.total_seconds()
+        sorted_df = filtered.sort_values('ts').copy()
 
-        max_time =max(int(sorted_df['ts_seconds'].max()), 1)
+        try:
+            sorted_df['ts_seconds'] = (
+                sorted_df['ts'] - sorted_df['ts'].min()
+            ).dt.total_seconds()
+        except:
+            sorted_df['ts_seconds'] = range(len(sorted_df))
+
+        sorted_df['ts_seconds'] = sorted_df['ts_seconds'].fillna(0)
+        max_time = max(int(sorted_df['ts_seconds'].max()), 1)
+
+        st.write(f"Match duration: {max_time} seconds")
 
         time_slider = st.slider(
             "Match Time (seconds)",
             min_value=0,
             max_value=max_time,
             value=max_time,
-            step=10
+            step=max(1, max_time // 100)
         )
 
         timeline_df = sorted_df[sorted_df['ts_seconds'] <= time_slider]
@@ -286,12 +251,15 @@ if len(filtered) > 0:
             ))
 
         if len(timeline_events) > 0:
-            colors = {
-                'Kill': 'green', 'BotKill': 'lightgreen',
-                'Killed': 'red', 'BotKilled': 'orange',
-                'KilledByStorm': 'purple', 'Loot': 'yellow'
+            colors_map = {
+                'Kill': 'green',
+                'BotKill': 'lightgreen',
+                'Killed': 'red',
+                'BotKilled': 'orange',
+                'KilledByStorm': 'purple',
+                'Loot': 'yellow'
             }
-            for event_type, color in colors.items():
+            for event_type, color in colors_map.items():
                 ev = timeline_events[timeline_events['event'] == event_type]
                 if len(ev) > 0:
                     fig2.add_trace(go.Scatter(
@@ -313,10 +281,6 @@ if len(filtered) > 0:
         st.plotly_chart(fig2)
         st.write(f"Showing events up to: {time_slider} seconds into the match")
         st.write(f"Events shown: {len(timeline_df)}")
-
-    # ─────────────────────────────────────
-    # TAB 3 — HEATMAP
-    # ─────────────────────────────────────
 
     with tab3:
         st.subheader("Heatmap")
